@@ -1,6 +1,15 @@
 Changelog
 =========
 
+3.0
+---
+
+* The executable now uses subcommands.
+  The previous behavior as a long-running daemon is now available under the ``daemon`` subcommand.
+* The command line flags for logging have changed.
+  The previous ``-l`` flag, which combined boolean behavior and file reading, has been split into two distinct flags: ``-d`` is a boolean switch to enable full debug logging to console, whereas the old ``-l`` is now only used for reading logging configuration files.
+  This change prevents nasty subtleties and issues when parsing the command line and became mandatory to support subcommands after the general configuration arguments such as logging.
+
 2.0
 ---
 

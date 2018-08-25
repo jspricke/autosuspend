@@ -55,14 +55,14 @@ class TestConfigureLogging:
     def test_debug(self, mocker):
         mock = mocker.patch('logging.basicConfig')
 
-        autosuspend.configure_logging(True)
+        autosuspend.configure_logging(None, True)
 
         mock.assert_called_once_with(level=logging.DEBUG)
 
     def test_standard(self, mocker):
         mock = mocker.patch('logging.basicConfig')
 
-        autosuspend.configure_logging(False)
+        autosuspend.configure_logging(None, False)
 
         mock.assert_called_once_with(level=logging.WARNING)
 
@@ -70,7 +70,7 @@ class TestConfigureLogging:
         mock = mocker.patch('logging.config.fileConfig')
 
         # anything that is not a boolean is treated like a file
-        autosuspend.configure_logging(42)
+        autosuspend.configure_logging(42, False)
 
         mock.assert_called_once_with(42)
 
@@ -80,7 +80,7 @@ class TestConfigureLogging:
         mock_basic = mocker.patch('logging.basicConfig')
 
         # anything that is not a boolean is treated like a file
-        autosuspend.configure_logging(42)
+        autosuspend.configure_logging(42, False)
 
         mock.assert_called_once_with(42)
         mock_basic.assert_called_once_with(level=logging.WARNING)

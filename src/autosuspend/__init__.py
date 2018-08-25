@@ -439,7 +439,30 @@ def parse_arguments(args: Optional[Sequence[str]]) -> argparse.Namespace:
         required=default_config is None,
         metavar='FILE',
         help='The config file to use')
-    parser.add_argument(
+
+    logging_group = parser.add_mutually_exclusive_group()
+    logging_group.add_argument(
+        '-l', '--logging',
+        type=argparse.FileType('r'),
+        default=None,
+        metavar='FILE',
+        help='Configures the python logging system from the specified '
+             'configuration file.')
+    logging_group.add_argument(
+        '-d', '--debug',
+        action='store_true',
+        default=False,
+        help='Configures the logging system to provide full debug output '
+             'on stdout.')
+
+    subparsers = parser.add_subparsers(title='subcommands',
+                                       dest='subcommand')
+    subparsers.required = True
+
+    parser_daemon = subparsers.add_parser(
+        'daemon', help='Execute the continuously operating daemon')
+    parser_daemon.set_defaults(func=main_daemon)
+    parser_daemon.add_argument(
         '-a', '--allchecks',
         dest='all_checks',
         default=False,
@@ -447,7 +470,7 @@ def parse_arguments(args: Optional[Sequence[str]]) -> argparse.Namespace:
         help='Execute all checks even if one has already prevented '
              'the system from going to sleep. Useful to debug individual '
              'checks.')
-    parser.add_argument(
+    parser_daemon.add_argument(
         '-r', '--runfor',
         dest='run_for',
         type=float,
@@ -455,17 +478,7 @@ def parse_arguments(args: Optional[Sequence[str]]) -> argparse.Namespace:
         metavar='SEC',
         help="If set, run for the specified amount of seconds before exiting "
              "instead of endless execution.")
-    parser.add_argument(
-        '-l', '--logging',
-        type=argparse.FileType('r'),
-        nargs='?',
-        default=False,
-        const=True,
-        metavar='FILE',
-        help='Configures the python logging system. If used '
-             'without an argument, all logging is enabled to '
-             'the console. If used with an argument, the '
-             'configuration is read from the specified file.')
+
 
     result = parser.parse_args(args)
 
@@ -474,47 +487,38 @@ def parse_arguments(args: Optional[Sequence[str]]) -> argparse.Namespace:
     return result
 
 
-def configure_logging(file_or_flag):
+def configure_logging(config_file: Optional[IO], debug: bool):
     """Configure the python :mod:`logging` system.
 
-    If the provided argument is a `file` instance, try to use the
-    pointed to file as a configuration for the logging system. Otherwise,
-    if the given argument evaluates to :class:True:, use a default
-    configuration with many logging messages. If everything fails, just log
-    starting from the warning level.
+    Assumes that either a config file is provided, or debugging is enabled.
+    Both together are not possible.
 
     Args:
-        file_or_flag (file or bool):
-            either a configuration file pointed by a :ref:`file object
-            <python:bltin-file-objects>` instance or something that evaluates
-            to :class:`bool`.
+        config_file:
+            a configuration file pointed by a :ref:`file object
+            <python:bltin-file-objects>`
+        debug:
+            if ``True``, enable debug logging
     """
-    if isinstance(file_or_flag, bool):
-        if file_or_flag:
-            logging.basicConfig(level=logging.DEBUG)
-        else:
-            # at least configure warnings
-            logging.basicConfig(level=logging.WARNING)
-    else:
+    if config_file:
         try:
-            logging.config.fileConfig(file_or_flag)
+            logging.config.fileConfig(config_file)
         except Exception:
             # at least configure warnings
             logging.basicConfig(level=logging.WARNING)
             _logger.warning('Unable to configure logging from file %s. '
                             'Falling back to warning level.',
-                            file_or_flag,
+                            config_file,
                             exc_info=True)
+    else:
+        if debug:
+            logging.basicConfig(level=logging.DEBUG)
+        else:
+            # at least configure warnings
+            logging.basicConfig(level=logging.WARNING)
 
 
-def main(args=None):
-    """Run the daemon."""
-    args = parse_arguments(args)
-
-    configure_logging(args.logging)
-
-    config = parse_config(args.config_file)
-
+def main_daemon(args, config):
     checks = set_up_checks(config, 'check', 'activity', Activity,
                            error_none=True)
     wakeups = set_up_checks(config, 'wakeup', 'wakeup', Wakeup)
@@ -538,6 +542,17 @@ def main(args=None):
          run_for=args.run_for,
          woke_up_file=config.get('general', 'woke_up_file',
                                  fallback='/var/run/autosuspend-just-woke-up'))
+
+
+def main(args=None):
+    """Run the daemon."""
+    args = parse_arguments(args)
+
+    configure_logging(args.logging, args.debug)
+
+    config = parse_config(args.config_file)
+
+    args.func(args, config)
 
 
 if __name__ == "__main__":

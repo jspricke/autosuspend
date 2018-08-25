@@ -42,9 +42,10 @@ def test_no_suspend_if_matching(tmpdir, rapid_sleep):
     autosuspend.main([
         '-c',
         configure_config('dont_suspend.conf', tmpdir).strpath,
+        '-d',
+        'daemon',
         '-r',
-        '10',
-        '-l'])
+        '10'])
 
     assert not tmpdir.join(SUSPENSION_FILE).check()
 
@@ -53,9 +54,10 @@ def test_suspend(tmpdir, rapid_sleep):
     autosuspend.main([
         '-c',
         configure_config('would_suspend.conf', tmpdir).strpath,
+        '-d',
+        'daemon',
         '-r',
-        '10',
-        '-l'])
+        '10'])
 
     assert tmpdir.join(SUSPENSION_FILE).check()
 
@@ -70,9 +72,10 @@ def test_wakeup_scheduled(tmpdir, rapid_sleep):
     autosuspend.main([
         '-c',
         configure_config('would_schedule.conf', tmpdir).strpath,
+        '-d',
+        'daemon',
         '-r',
-        '10',
-        '-l'])
+        '10'])
 
     assert tmpdir.join(SUSPENSION_FILE).check()
     assert tmpdir.join(SCHEDULED_FILE).check()
@@ -85,9 +88,10 @@ def test_woke_up_file_removed(tmpdir, rapid_sleep):
     autosuspend.main([
         '-c',
         configure_config('dont_suspend.conf', tmpdir).strpath,
+        '-d',
+        'daemon',
         '-r',
-        '5',
-        '-l'])
+        '5'])
     assert not tmpdir.join(WOKE_UP_FILE).check()
 
 
@@ -95,9 +99,10 @@ def test_notify_call(tmpdir, rapid_sleep):
     autosuspend.main([
         '-c',
         configure_config('notify.conf', tmpdir).strpath,
+        '-d',
+        'daemon',
         '-r',
-        '10',
-        '-l'])
+        '10'])
 
     assert tmpdir.join(SUSPENSION_FILE).check()
     assert tmpdir.join(NOTIFY_FILE).check()
@@ -114,9 +119,10 @@ def test_notify_call_wakeup(tmpdir, rapid_sleep):
     autosuspend.main([
         '-c',
         configure_config('notify_wakeup.conf', tmpdir).strpath,
+        '-d',
+        'daemon',
         '-r',
-        '10',
-        '-l'])
+        '10'])
 
     assert tmpdir.join(SUSPENSION_FILE).check()
     assert tmpdir.join(NOTIFY_FILE).check()
@@ -128,9 +134,10 @@ def test_temporary_errors_logged(tmpdir, rapid_sleep, caplog):
     autosuspend.main([
         '-c',
         configure_config('temporary_error.conf', tmpdir).strpath,
+        '-d',
+        'daemon',
         '-r',
-        '10',
-        '-l'])
+        '10'])
 
     warnings = [r for r in caplog.record_tuples
                 if r[1] == logging.WARNING and
