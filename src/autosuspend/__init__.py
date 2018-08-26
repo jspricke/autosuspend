@@ -518,6 +518,33 @@ def configure_logging(config_file: Optional[IO], debug: bool):
             logging.basicConfig(level=logging.WARNING)
 
 
+def get_notify_and_suspend_func(config: configparser.ConfigParser) -> Callable:
+    return functools.partial(
+        notify_and_suspend,
+        config.get('general', 'suspend_cmd'),
+        config.get('general',  # type: ignore # python/typeshed#2093
+                   'notify_cmd_wakeup',
+                   fallback=None),
+        config.get('general',  # type: ignore # python/typeshed#2093
+                   'notify_cmd_no_wakeup',
+                   fallback=None))
+
+
+def get_schedule_wakeup_func(config: configparser.ConfigParser) -> Callable[
+        [datetime.datetime], None]:
+    return functools.partial(schedule_wakeup,
+                             config.get('general', 'wakeup_cmd'))
+
+
+def get_woke_up_file(config: configparser.ConfigParser) -> str:
+    return config.get('general', 'woke_up_file',
+                      fallback='/var/run/autosuspend-just-woke-up')
+
+
+def get_wakeup_delta(config: configparser.ConfigParser) -> float:
+    return config.getfloat('general', 'wakeup_delta', fallback=30)
+
+
 def main_daemon(args, config):
     checks = set_up_checks(config, 'check', 'activity', Activity,
                            error_none=True)
@@ -527,21 +554,14 @@ def main_daemon(args, config):
         checks, wakeups,
         config.getfloat('general', 'idle_time', fallback=300),
         config.getfloat('general', 'min_sleep_time', fallback=1200),
-        config.getfloat('general', 'wakeup_delta', fallback=30),
-        functools.partial(notify_and_suspend,
-                          config.get('general', 'suspend_cmd'),
-                          config.get('general', 'notify_cmd_wakeup',
-                                     fallback=None),
-                          config.get('general', 'notify_cmd_no_wakeup',
-                                     fallback=None)),
-        functools.partial(schedule_wakeup,
-                          config.get('general', 'wakeup_cmd')),
+        get_wakeup_delta(config),
+        get_notify_and_suspend_func(config),
+        get_schedule_wakeup_func(config),
         all_activities=args.all_checks)
     loop(processor,
          config.getfloat('general', 'interval', fallback=60),
          run_for=args.run_for,
-         woke_up_file=config.get('general', 'woke_up_file',
-                                 fallback='/var/run/autosuspend-just-woke-up'))
+         woke_up_file=get_woke_up_file(config))
 
 
 def main(args=None):
