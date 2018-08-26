@@ -9,6 +9,7 @@ import logging
 import logging.config
 import os
 import os.path
+import pathlib
 import subprocess
 import time
 from typing import (Callable,
@@ -19,6 +20,8 @@ from typing import (Callable,
                     Sequence,
                     Type,
                     TypeVar)
+
+import portalocker
 
 from .checks import (Activity,
                      Check,
@@ -285,9 +288,11 @@ class Processor:
 
 
 def loop(processor: Processor,
-         interval: int,
+         interval: float,
          run_for: Optional[int],
-         woke_up_file: str) -> None:
+         woke_up_file: str,
+         lock_file: str,
+         lock_timeout: float) -> None:
     """Run the main loop of the daemon.
 
     Args:
@@ -295,14 +300,17 @@ def loop(processor: Processor,
             the processor to use for handling the suspension computations
         interval:
             the length of one iteration of the main loop in seconds
-        idle_time:
-            the required amount of time the system has to be idle before
-            suspension is triggered
-        sleep_fn:
-            a callable that triggers suspension
         run_for:
             if specified, run the main loop for the specified amount of seconds
             before terminating (approximately)
+        woke_up_file:
+            path of a file that marks that the system was sleeping since the
+            last processing iterations
+        lock_file:
+            path of a file used for locking modifications to the `woke_up_file`
+            to ensure consistency
+        lock_timeout:
+            time in seconds to wait for acquiring the lock file
     """
 
     start_time = datetime.datetime.now(datetime.timezone.utc)
@@ -310,12 +318,23 @@ def loop(processor: Processor,
                                 (start_time + datetime.timedelta(
                                     seconds=run_for))):
 
-        just_woke_up = os.path.isfile(woke_up_file)
-        if just_woke_up:
-            os.remove(woke_up_file)
+        try:
+            _logger.debug('New iteration, trying to acquire lock')
+            with portalocker.Lock(lock_file, timeout=lock_timeout):
+                _logger.debug('Acquired lock')
 
-        processor.iteration(datetime.datetime.now(datetime.timezone.utc),
-                            just_woke_up)
+                just_woke_up = os.path.isfile(woke_up_file)
+                if just_woke_up:
+                    _logger.debug('Removing woke up file at %s', woke_up_file)
+                    os.remove(woke_up_file)
+
+                processor.iteration(
+                    datetime.datetime.now(datetime.timezone.utc),
+                    just_woke_up)
+
+        except portalocker.LockException:
+            _logger.warning('Failed to acquire lock, skipping iteration',
+                            exc_info=True)
 
         time.sleep(interval)
 
@@ -397,7 +416,7 @@ def set_up_checks(config: configparser.ConfigParser,
     return configured_checks
 
 
-def parse_config(config_file: Iterable[str]):
+def parse_config(config_file: Iterable[str]) -> configparser.ConfigParser:
     """Parse the configuration file.
 
     Args:
@@ -479,6 +498,9 @@ def parse_arguments(args: Optional[Sequence[str]]) -> argparse.Namespace:
         help="If set, run for the specified amount of seconds before exiting "
              "instead of endless execution.")
 
+    parser_hook = subparsers.add_parser(
+        'presuspend', help='Hook method to be called before suspending')
+    parser_hook.set_defaults(func=main_hook)
 
     result = parser.parse_args(args)
 
@@ -541,14 +563,82 @@ def get_woke_up_file(config: configparser.ConfigParser) -> str:
                       fallback='/var/run/autosuspend-just-woke-up')
 
 
+def get_lock_file(config: configparser.ConfigParser) -> str:
+    return config.get('general', 'lock_file',
+                      fallback='/var/lock/autosuspend.lock')
+
+
+def get_lock_timeout(config: configparser.ConfigParser) -> float:
+    return config.getfloat('general', 'lock_timeout', fallback=30.0)
+
+
 def get_wakeup_delta(config: configparser.ConfigParser) -> float:
     return config.getfloat('general', 'wakeup_delta', fallback=30)
 
 
-def main_daemon(args, config):
-    checks = set_up_checks(config, 'check', 'activity', Activity,
-                           error_none=True)
-    wakeups = set_up_checks(config, 'wakeup', 'wakeup', Wakeup)
+def hook(wakeups: List[Wakeup],
+         wakeup_delta: float,
+         wakeup_fn: Callable[[datetime.datetime], None],
+         woke_up_file: str,
+         lock_file: str,
+         lock_timeout: float):
+    """Installs wake ups and notifies the daemon before suspending.
+
+    Args:
+        wakeups:
+            set of wakeup checks to use for determining the wake up time
+        wakeup_delta:
+            The amount of time in seconds to wake up before an event
+        wakeup_fn:
+            function to call with the next wake up time
+        woke_up_file:
+            location of the file that instructs the daemon that the system just
+            woke up
+        lock_file:
+            path of a file used for locking modifications to the `woke_up_file`
+            to ensure consistency
+        lock_timeout:
+            time in seconds to wait for acquiring the lock file
+    """
+    _logger.debug('Hook starting, trying to acquire lock')
+    try:
+        with portalocker.Lock(lock_file, timeout=lock_timeout):
+            _logger.debug('Hook acquired lock')
+
+            _logger.debug('Hook executing with configured wake ups: %s',
+                          wakeups)
+            wakeup_at = execute_wakeups(
+                wakeups, datetime.datetime.now(datetime.timezone.utc), _logger)
+            _logger.debug('Hook next wake up at %s', wakeup_at)
+
+            if wakeup_at:
+                wakeup_at -= datetime.timedelta(seconds=wakeup_delta)
+                _logger.info('Scheduling next wake up at %s', wakeup_at)
+                wakeup_fn(wakeup_at)
+
+            # create the just woke up file
+            pathlib.Path(woke_up_file).touch()
+    except portalocker.LockException:
+        _logger.warning('Hook unable to acquire lock. Not informing daemon.',
+                        exc_info=True)
+
+
+def main_hook(args: argparse.Namespace, config: configparser.ConfigParser):
+    wakeups = set_up_checks(  # type: ignore # python/mypy#5374
+        config, 'wakeup', 'wakeup', Wakeup)
+    hook(wakeups,
+         get_wakeup_delta(config),
+         get_schedule_wakeup_func(config),
+         get_woke_up_file(config),
+         get_lock_file(config),
+         get_lock_timeout(config))
+
+
+def main_daemon(args: argparse.Namespace, config: configparser.ConfigParser):
+    checks = set_up_checks(  # type: ignore # python/mypy#5374
+        config, 'check', 'activity', Activity, error_none=True)
+    wakeups = set_up_checks(  # type: ignore # python/mypy#5374
+        config, 'wakeup', 'wakeup', Wakeup)
 
     processor = Processor(
         checks, wakeups,
@@ -561,7 +651,9 @@ def main_daemon(args, config):
     loop(processor,
          config.getfloat('general', 'interval', fallback=60),
          run_for=args.run_for,
-         woke_up_file=get_woke_up_file(config))
+         woke_up_file=get_woke_up_file(config),
+         lock_file=get_lock_file(config),
+         lock_timeout=get_lock_timeout(config))
 
 
 def main(args=None):

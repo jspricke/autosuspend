@@ -17,6 +17,7 @@ ROOT = os.path.dirname(os.path.realpath(__file__))
 SUSPENSION_FILE = 'would_suspend'
 SCHEDULED_FILE = 'wakeup_at'
 WOKE_UP_FILE = 'test-woke-up'
+LOCK_FILE = 'test-woke-up.lock'
 NOTIFY_FILE = 'notify'
 
 
@@ -145,3 +146,31 @@ def test_temporary_errors_logged(tmpdir, rapid_sleep, caplog):
                 'failed' in r[2]]
 
     assert len(warnings) > 0
+
+
+def test_hook_success(tmpdir):
+    autosuspend.main([
+        '-c',
+        configure_config('would_suspend.conf', tmpdir).strpath,
+        '-d',
+        'presuspend'])
+
+    assert tmpdir.join(WOKE_UP_FILE).check()
+
+
+def test_hook_call_wakeup(tmpdir):
+    # configure when to wake up
+    now = datetime.datetime.now(datetime.timezone.utc)
+    wakeup_at = now + datetime.timedelta(hours=4)
+    with tmpdir.join('wakeup_time').open('w') as out:
+        out.write(str(wakeup_at.timestamp()))
+
+    autosuspend.main([
+        '-c',
+        configure_config('would_schedule.conf', tmpdir).strpath,
+        '-d',
+        'presuspend'])
+
+    assert tmpdir.join(SCHEDULED_FILE).check()
+    assert int(tmpdir.join(SCHEDULED_FILE).read()) == int(
+        round((wakeup_at - datetime.timedelta(seconds=30)).timestamp()))

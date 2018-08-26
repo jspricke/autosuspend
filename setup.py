@@ -27,6 +27,7 @@ setup(
     ],
     install_requires=[
         'psutil>=5.0',
+        'portalocker',
     ],
     extras_require={
         'Mpd': ['python-mpd2'],
